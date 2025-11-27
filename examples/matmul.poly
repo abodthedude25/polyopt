@@ -1,0 +1,13 @@
+// Matrix multiplication example
+// Classic triply-nested loop for C = A * B
+
+func matmul(A[N][K], B[K][M], C[N][M]) {
+    for i = 0 to N {
+        for j = 0 to M {
+            C[i][j] = 0;
+            for k = 0 to K {
+                C[i][j] = C[i][j] + A[i][k] * B[k][j];
+            }
+        }
+    }
+}
