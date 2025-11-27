@@ -1,4 +1,9 @@
 //! Analysis passes for polyhedral optimization.
+//!
+//! This module provides:
+//! - SCoP detection (identifying polyhedral regions)
+//! - Dependence analysis (RAW, WAR, WAW dependencies)
+//! - Full pipeline from AST to polyhedral representation
 
 pub mod scop;
 pub mod dependence;
@@ -8,6 +13,7 @@ pub use dependence::{DependenceAnalysis, Dependence, DependenceKind};
 
 use crate::frontend::ast::Program;
 use crate::ir::pir::PolyProgram;
+use crate::ir::{lower_program, lower_to_pir};
 use anyhow::Result;
 
 /// Extract static control parts from a program.
@@ -20,4 +26,38 @@ pub fn extract_scops(program: &Program) -> Result<Vec<SCoP>> {
 pub fn analyze_dependencies(program: &PolyProgram) -> Result<Vec<Dependence>> {
     let analyzer = DependenceAnalysis::new();
     analyzer.analyze(program)
+}
+
+/// Full extraction pipeline: AST -> HIR -> PIR.
+/// Returns polyhedral programs for all functions.
+pub fn extract_polyhedral(program: &Program) -> Result<Vec<PolyProgram>> {
+    // First check if the program forms valid SCoPs
+    let detector = ScoPDetector::new();
+    let scops = detector.detect(program)?;
+    
+    // If no valid SCoPs found, we can still try to lower (may fail later)
+    if scops.is_empty() {
+        anyhow::bail!("No valid SCoPs found in program");
+    }
+    
+    // Lower to HIR
+    let hir = lower_program(program)?;
+    
+    // Lower to PIR
+    let pir = lower_to_pir(&hir)?;
+    
+    Ok(pir)
+}
+
+/// Extract and analyze: get polyhedral programs with dependencies.
+pub fn extract_and_analyze(program: &Program) -> Result<Vec<(PolyProgram, Vec<Dependence>)>> {
+    let pir_programs = extract_polyhedral(program)?;
+    
+    let mut results = Vec::new();
+    for prog in pir_programs {
+        let deps = analyze_dependencies(&prog)?;
+        results.push((prog, deps));
+    }
+    
+    Ok(results)
 }

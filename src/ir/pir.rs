@@ -303,13 +303,14 @@ impl PolyStmtBuilder {
     pub fn build(self) -> Option<PolyStmt> {
         let domain = self.domain?;
         let dim = domain.dim();
+        let schedule = self.schedule.unwrap_or_else(|| {
+            // Default identity schedule
+            AffineMap::identity(dim)
+        });
         Some(PolyStmt {
             id: self.id,
             name: self.name,
-            schedule: self.schedule.unwrap_or_else(|| {
-                // Default identity schedule
-                AffineMap::identity(dim)
-            }),
+            schedule,
             domain,
             reads: self.reads,
             writes: self.writes,

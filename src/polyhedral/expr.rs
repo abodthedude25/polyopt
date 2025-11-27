@@ -75,6 +75,15 @@ impl AffineExpr {
         self.constant == 0 && self.is_constant()
     }
 
+    /// Get the constant value if this is a constant expression.
+    pub fn as_constant(&self) -> Option<i64> {
+        if self.is_constant() {
+            Some(self.constant)
+        } else {
+            None
+        }
+    }
+
     /// Get the number of dimensions.
     pub fn n_dim(&self) -> usize {
         self.coeffs.len()

@@ -55,11 +55,13 @@ pub mod prelude {
     pub use crate::ir::ast::*;
     pub use crate::ir::hir::*;
     pub use crate::ir::pir::*;
+    pub use crate::ir::{lower_program, lower_to_pir};
     pub use crate::polyhedral::{
         AffineExpr, Constraint, IntegerSet, AffineMap, Space,
     };
     pub use crate::analysis::{
-        Dependence, DependenceKind, SCoP,
+        Dependence, DependenceKind, SCoP, ScoPStmt, ScoPDetector,
+        extract_scops, extract_polyhedral,
     };
     pub use crate::transform::Transform;
     pub use crate::codegen::Target;
@@ -71,6 +73,23 @@ use anyhow::Result;
 /// Main entry point for parsing source code.
 pub fn parse(source: &str) -> Result<ir::ast::Program> {
     frontend::parse(source)
+}
+
+/// Lower AST to HIR.
+pub fn lower_ast(program: &ir::ast::Program) -> Result<ir::HirProgram> {
+    ir::lower_program(program)
+}
+
+/// Lower HIR to PIR (polyhedral representation).
+pub fn lower_hir(hir: &ir::HirProgram) -> Result<Vec<ir::PolyProgram>> {
+    ir::lower_to_pir(hir)
+}
+
+/// Full pipeline: parse source and lower to polyhedral representation.
+pub fn parse_and_lower(source: &str) -> Result<Vec<ir::PolyProgram>> {
+    let ast = parse(source)?;
+    let hir = lower_ast(&ast)?;
+    lower_hir(&hir)
 }
 
 /// Configuration for the optimization pipeline.
