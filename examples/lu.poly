@@ -1,0 +1,18 @@
+// LU Decomposition (in-place)
+// Classic dense linear algebra factorization
+
+func lu(A[N][N]) {
+    for k = 0 to N-1 {
+        // Compute multipliers
+        for i = k+1 to N {
+            A[i][k] = A[i][k] / A[k][k];
+        }
+        
+        // Update trailing submatrix
+        for i = k+1 to N {
+            for j = k+1 to N {
+                A[i][j] = A[i][j] - A[i][k] * A[k][j];
+            }
+        }
+    }
+}

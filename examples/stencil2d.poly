@@ -1,0 +1,18 @@
+// 2D Stencil computation (5-point stencil)
+// Common in image processing and PDE solvers
+
+func stencil2d(A[N][M], B[N][M]) {
+    for t = 0 to T {
+        for i = 1 to N-1 {
+            for j = 1 to M-1 {
+                B[i][j] = 0.2 * (A[i][j] + A[i-1][j] + A[i+1][j] + A[i][j-1] + A[i][j+1]);
+            }
+        }
+        // Copy back
+        for i = 1 to N-1 {
+            for j = 1 to M-1 {
+                A[i][j] = B[i][j];
+            }
+        }
+    }
+}

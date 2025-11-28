@@ -1,0 +1,15 @@
+// 2D Convolution with 3x3 kernel
+// Common in image processing and CNNs
+
+func conv2d(Input[H][W], Kernel[3][3], Output[H][W]) {
+    for i = 1 to H-1 {
+        for j = 1 to W-1 {
+            Output[i][j] = 0.0;
+            for ki = 0 to 3 {
+                for kj = 0 to 3 {
+                    Output[i][j] += Input[i+ki-1][j+kj-1] * Kernel[ki][kj];
+                }
+            }
+        }
+    }
+}

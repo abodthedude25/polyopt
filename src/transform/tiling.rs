@@ -59,7 +59,8 @@ impl Tiling {
     }
 
     /// Apply tiling to a single statement's schedule.
-    fn tile_schedule(&self, stmt: &PolyStmt) -> AffineMap {
+    /// Apply tiling to a statement's schedule.
+    pub fn tile_schedule(&self, stmt: &PolyStmt) -> AffineMap {
         let n_dim = stmt.depth();
         let n_param = stmt.domain.n_param();
         
@@ -110,6 +111,58 @@ impl Tiling {
             if !tiled_set.contains(&d) {
                 let expr = if d < stmt.schedule.n_out() {
                     stmt.schedule.outputs[d].clone()
+                } else {
+                    AffineExpr::var(d, n_dim, n_param)
+                };
+                outputs.push(expr);
+            }
+        }
+        
+        AffineMap::from_outputs(n_dim, outputs)
+    }
+
+    /// Apply tiling directly to an AffineMap schedule.
+    pub fn apply_to_schedule(&self, schedule: &AffineMap) -> AffineMap {
+        let n_dim = schedule.n_in();
+        let n_param = 0; // Assume no parameters for now
+        
+        // Determine which dimensions to tile
+        let dims_to_tile: Vec<usize> = match &self.dimensions {
+            Some(dims) => dims.iter()
+                .filter(|&&d| d < n_dim && d < self.tile_sizes.len())
+                .copied()
+                .collect(),
+            None => (0..n_dim.min(self.tile_sizes.len())).collect(),
+        };
+        
+        if dims_to_tile.is_empty() {
+            return schedule.clone();
+        }
+        
+        let tiled_set: HashSet<usize> = dims_to_tile.iter().copied().collect();
+        let mut outputs = Vec::new();
+        
+        // First pass: add tile and point iterators for tiled dimensions
+        for (idx, &d) in dims_to_tile.iter().enumerate() {
+            let tile_size = self.tile_sizes[idx];
+            
+            let orig_expr = if d < schedule.n_out() {
+                schedule.outputs[d].clone()
+            } else {
+                AffineExpr::var(d, n_dim, n_param)
+            };
+            
+            // Tile iterator
+            outputs.push(orig_expr.floordiv(tile_size));
+            // Point iterator
+            outputs.push(orig_expr);
+        }
+        
+        // Second pass: add non-tiled dimensions
+        for d in 0..n_dim {
+            if !tiled_set.contains(&d) {
+                let expr = if d < schedule.n_out() {
+                    schedule.outputs[d].clone()
                 } else {
                     AffineExpr::var(d, n_dim, n_param)
                 };

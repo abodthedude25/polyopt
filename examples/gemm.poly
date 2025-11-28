@@ -1,13 +1,19 @@
-// General matrix multiply with parallel annotation
-// Shows how to hint at parallelization
+// GEMM (General Matrix Multiply): C = alpha * A * B + beta * C
+// Classic dense linear algebra kernel
 
-func gemm(alpha, beta, A[N][K], B[K][M], C[N][M]) {
-    @parallel
+func gemm(A[N][K], B[K][M], C[N][M], alpha: double, beta: double) {
+    // Scale C by beta
     for i = 0 to N {
         for j = 0 to M {
-            C[i][j] = C[i][j] * beta;
+            C[i][j] = beta * C[i][j];
+        }
+    }
+    
+    // Multiply A * B and accumulate
+    for i = 0 to N {
+        for j = 0 to M {
             for k = 0 to K {
-                C[i][j] = C[i][j] + alpha * A[i][k] * B[k][j];
+                C[i][j] += alpha * A[i][k] * B[k][j];
             }
         }
     }

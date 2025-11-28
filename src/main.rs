@@ -1,275 +1,530 @@
-//! PolyOpt Command Line Interface
+//! PolyOpt - A Polyhedral Loop Optimizer
 //!
-//! Usage:
-//!   polyopt [OPTIONS] <input-file>
-//!   polyopt --help
-//!
-//! Examples:
-//!   polyopt matmul.poly                    # Optimize with defaults
-//!   polyopt -O3 --target=openmp matmul.poly  # Max optimization, OpenMP target
-//!   polyopt --tile-sizes=64,64,32 gemm.poly  # Custom tile sizes
-//!   polyopt --emit=ast matmul.poly          # Just parse and dump AST
+//! Main command-line interface for the polyhedral optimizer.
 
-use clap::{Parser, ValueEnum};
-use polyopt::{OptimizationConfig, codegen::Target};
-use std::path::PathBuf;
-use std::fs;
+use polyopt::{parse, parse_and_lower};
+use polyopt::analysis::{DependenceAnalysis, DependenceGraph};
+use polyopt::codegen::{generate, Target, generate_benchmark, CodeGenOptions, CCodeGen};
+use polyopt::transform::{
+    Tiling, Interchange, Fusion,
+    Scheduler, ScheduleAlgorithm,
+};
+
+use clap::{Parser, Subcommand, ValueEnum};
 use anyhow::{Result, Context};
-use log::{info, debug, error};
+use std::fs;
+use std::path::PathBuf;
 
-/// PolyOpt - Polyhedral Compiler Optimization Framework
-#[derive(Parser, Debug)]
+#[derive(Parser)]
 #[command(name = "polyopt")]
-#[command(author = "PolyOpt Contributors")]
-#[command(version)]
-#[command(about = "A polyhedral compiler optimization framework", long_about = None)]
+#[command(author = "PolyOpt Team")]
+#[command(version = "0.1.0")]
+#[command(about = "Polyhedral loop optimizer for high-performance computing")]
+#[command(long_about = r#"
+PolyOpt is a polyhedral compiler that optimizes loop nests for parallelism
+and data locality. It performs:
+
+  - Dependence analysis to identify loop-carried dependencies
+  - Transformations like tiling, interchange, and fusion
+  - Automatic scheduling using Pluto-like algorithms
+  - Code generation to C/OpenMP
+
+Example usage:
+  polyopt compile input.poly -o output.c --openmp
+  polyopt analyze input.poly --deps --parallel
+  polyopt optimize input.poly --tile 32 --schedule pluto
+"#)]
 struct Cli {
-    /// Input file to optimize (.poly format)
-    #[arg(value_name = "FILE")]
-    input: PathBuf,
+    #[command(subcommand)]
+    command: Commands,
+}
 
-    /// Output file (defaults to stdout)
-    #[arg(short, long, value_name = "FILE")]
-    output: Option<PathBuf>,
-
-    /// Optimization level (0-3)
-    #[arg(short = 'O', long, default_value = "2", value_parser = clap::value_parser!(u8).range(0..=3))]
-    opt_level: u8,
-
-    /// Code generation target
-    #[arg(short, long, default_value = "c")]
-    target: TargetArg,
-
-    /// Tile sizes (comma-separated)
-    #[arg(long, value_delimiter = ',', num_args = 1..)]
-    tile_sizes: Option<Vec<i64>>,
-
-    /// Disable loop tiling
-    #[arg(long)]
-    no_tiling: bool,
-
-    /// Disable loop fusion
-    #[arg(long)]
-    no_fusion: bool,
-
-    /// Disable automatic scheduling
-    #[arg(long)]
-    no_auto_schedule: bool,
-
-    /// Disable parallelization
-    #[arg(long)]
-    no_parallel: bool,
-
-    /// Disable vectorization hints
-    #[arg(long)]
-    no_vectorize: bool,
-
-    /// What to emit
-    #[arg(long, default_value = "code")]
-    emit: EmitKind,
-
-    /// Verbose output (-v, -vv, -vvv)
-    #[arg(short, long, action = clap::ArgAction::Count)]
-    verbose: u8,
-
-    /// Quiet mode (suppress warnings)
-    #[arg(short, long)]
-    quiet: bool,
-
-    /// Dump intermediate representations
-    #[arg(long)]
-    dump_ir: bool,
-
-    /// Enable auto-tuning (experimental)
-    #[cfg(feature = "autotuning")]
-    #[arg(long)]
-    autotune: bool,
-
-    /// Enable ML-based scheduling (experimental)
-    #[cfg(feature = "ml")]
-    #[arg(long)]
-    ml_schedule: bool,
+#[derive(Subcommand)]
+enum Commands {
+    /// Compile a .poly file to C code
+    Compile {
+        /// Input .poly file
+        input: PathBuf,
+        
+        /// Output file (default: stdout)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        
+        /// Target format
+        #[arg(short, long, value_enum, default_value = "c")]
+        target: TargetArg,
+        
+        /// Enable OpenMP parallelization
+        #[arg(long)]
+        openmp: bool,
+        
+        /// Enable vectorization hints
+        #[arg(long)]
+        vectorize: bool,
+        
+        /// Generate timing/benchmark code
+        #[arg(long)]
+        benchmark: bool,
+    },
+    
+    /// Analyze a .poly file
+    Analyze {
+        /// Input .poly file
+        input: PathBuf,
+        
+        /// Show dependence information
+        #[arg(long)]
+        deps: bool,
+        
+        /// Show parallelism opportunities
+        #[arg(long)]
+        parallel: bool,
+        
+        /// Show detailed statistics
+        #[arg(long)]
+        stats: bool,
+        
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    
+    /// Optimize and transform a .poly file
+    Optimize {
+        /// Input .poly file
+        input: PathBuf,
+        
+        /// Output file (default: stdout)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        
+        /// Apply tiling with given size
+        #[arg(long)]
+        tile: Option<i64>,
+        
+        /// Scheduling algorithm
+        #[arg(long, value_enum, default_value = "pluto")]
+        schedule: ScheduleArg,
+        
+        /// Enable OpenMP in output
+        #[arg(long)]
+        openmp: bool,
+    },
+    
+    /// Print parsed AST (for debugging)
+    Parse {
+        /// Input .poly file
+        input: PathBuf,
+        
+        /// Show HIR instead of AST
+        #[arg(long)]
+        hir: bool,
+        
+        /// Show PIR (polyhedral IR)
+        #[arg(long)]
+        pir: bool,
+    },
+    
+    /// Run benchmarks
+    Bench {
+        /// Input .poly file
+        input: PathBuf,
+        
+        /// Problem size
+        #[arg(short = 'N', long, default_value = "1000")]
+        size: i64,
+        
+        /// Number of iterations
+        #[arg(short, long, default_value = "5")]
+        iterations: usize,
+        
+        /// Enable OpenMP
+        #[arg(long)]
+        openmp: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum TargetArg {
-    /// Plain C code
     C,
-    /// C with OpenMP pragmas
     Openmp,
-    /// CUDA kernels
     Cuda,
-    /// OpenCL kernels
     Opencl,
-    /// LLVM IR
-    Llvm,
-}
-
-impl From<TargetArg> for Target {
-    fn from(arg: TargetArg) -> Self {
-        match arg {
-            TargetArg::C => Target::C,
-            TargetArg::Openmp => Target::OpenMP,
-            TargetArg::Cuda => Target::Cuda,
-            TargetArg::Opencl => Target::OpenCL,
-            TargetArg::Llvm => Target::LLVM,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-enum EmitKind {
-    /// Generated source code
-    Code,
-    /// Abstract Syntax Tree
-    Ast,
-    /// High-level IR
-    Hir,
-    /// Polyhedral IR
-    Pir,
-    /// Dependence graph (DOT format)
-    Deps,
-    /// Schedule (isl format)
-    Schedule,
-    /// All stages (for debugging)
-    All,
+enum ScheduleArg {
+    Pluto,
+    Feautrier,
+    Greedy,
+}
+
+impl From<ScheduleArg> for ScheduleAlgorithm {
+    fn from(arg: ScheduleArg) -> Self {
+        match arg {
+            ScheduleArg::Pluto => ScheduleAlgorithm::Pluto,
+            ScheduleArg::Feautrier => ScheduleAlgorithm::Feautrier,
+            ScheduleArg::Greedy => ScheduleAlgorithm::Greedy,
+        }
+    }
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Initialize logging
-    let log_level = if cli.quiet {
-        log::LevelFilter::Error
-    } else {
-        match cli.verbose {
-            0 => log::LevelFilter::Warn,
-            1 => log::LevelFilter::Info,
-            2 => log::LevelFilter::Debug,
-            _ => log::LevelFilter::Trace,
+    match cli.command {
+        Commands::Compile { input, output, target, openmp, vectorize, benchmark } => {
+            cmd_compile(input, output, target, openmp, vectorize, benchmark)
         }
+        Commands::Analyze { input, deps, parallel, stats, json } => {
+            cmd_analyze(input, deps, parallel, stats, json)
+        }
+        Commands::Optimize { input, output, tile, schedule, openmp } => {
+            cmd_optimize(input, output, tile, schedule, openmp)
+        }
+        Commands::Parse { input, hir, pir } => {
+            cmd_parse(input, hir, pir)
+        }
+        Commands::Bench { input, size, iterations, openmp } => {
+            cmd_bench(input, size, iterations, openmp)
+        }
+    }
+}
+
+fn cmd_compile(
+    input: PathBuf,
+    output: Option<PathBuf>,
+    target: TargetArg,
+    openmp: bool,
+    vectorize: bool,
+    benchmark: bool,
+) -> Result<()> {
+    let source = fs::read_to_string(&input)
+        .with_context(|| format!("Failed to read {}", input.display()))?;
+    
+    let programs = parse_and_lower(&source)
+        .with_context(|| "Failed to parse and lower")?;
+    
+    if programs.is_empty() {
+        anyhow::bail!("No functions found in input");
+    }
+    
+    let program = &programs[0];
+    
+    // Generate code
+    let target_enum = match target {
+        TargetArg::C => if openmp { Target::OpenMP } else { Target::C },
+        TargetArg::Openmp => Target::OpenMP,
+        TargetArg::Cuda => Target::Cuda,
+        TargetArg::Opencl => Target::OpenCL,
     };
     
-    env_logger::Builder::from_default_env()
-        .filter_level(log_level)
-        .format_timestamp(None)
-        .init();
-
-    info!("PolyOpt v{}", polyopt::VERSION);
-    debug!("Input file: {:?}", cli.input);
-
-    // Read input file
-    let source = fs::read_to_string(&cli.input)
-        .with_context(|| format!("Failed to read input file: {:?}", cli.input))?;
-
-    // Parse the source
-    info!("Parsing...");
-    let program = polyopt::parse(&source)
-        .with_context(|| "Failed to parse input")?;
-
-    // Handle --emit=ast early exit
-    if matches!(cli.emit, EmitKind::Ast) {
-        let output = format!("{:#?}", program);
-        write_output(&cli.output, &output)?;
-        return Ok(());
+    let code = if benchmark {
+        generate_benchmark(program, openmp || matches!(target, TargetArg::Openmp))?
+    } else {
+        let options = CodeGenOptions {
+            openmp: openmp || matches!(target, TargetArg::Openmp),
+            vectorize,
+            ..Default::default()
+        };
+        let codegen = CCodeGen::with_options(options);
+        codegen.generate(program)?
+    };
+    
+    // Output
+    if let Some(out_path) = output {
+        fs::write(&out_path, &code)
+            .with_context(|| format!("Failed to write {}", out_path.display()))?;
+        eprintln!("Wrote {} bytes to {}", code.len(), out_path.display());
+    } else {
+        print!("{}", code);
     }
-
-    // Build optimization config
-    let config = build_config(&cli);
-    debug!("Optimization config: {:?}", config);
-
-    // Run optimization pipeline
-    info!("Optimizing...");
-    match polyopt::optimize(program, config) {
-        Ok(_optimized) => {
-            // TODO: Code generation based on emit kind
-            info!("Optimization complete!");
-            println!("// Optimization successful - code generation not yet implemented");
-        }
-        Err(e) => {
-            error!("Optimization failed: {}", e);
-            return Err(e);
-        }
-    }
-
+    
     Ok(())
 }
 
-fn build_config(cli: &Cli) -> OptimizationConfig {
-    let mut config = match cli.opt_level {
-        0 => OptimizationConfig {
-            enable_tiling: false,
-            enable_fusion: false,
-            enable_interchange: false,
-            enable_auto_schedule: false,
-            enable_vectorization: false,
-            enable_parallelization: false,
-            ..Default::default()
-        },
-        1 => OptimizationConfig {
-            enable_tiling: true,
-            enable_fusion: false,
-            enable_interchange: true,
-            enable_auto_schedule: false,
-            ..Default::default()
-        },
-        2 => OptimizationConfig::default(),
-        _ => OptimizationConfig {
-            enable_tiling: true,
-            enable_fusion: true,
-            enable_interchange: true,
-            enable_auto_schedule: true,
-            enable_vectorization: true,
-            enable_parallelization: true,
-            ..Default::default()
-        },
-    };
-
-    // Override with CLI flags
-    if cli.no_tiling {
-        config.enable_tiling = false;
+fn cmd_analyze(
+    input: PathBuf,
+    deps: bool,
+    parallel: bool,
+    stats: bool,
+    json: bool,
+) -> Result<()> {
+    let source = fs::read_to_string(&input)
+        .with_context(|| format!("Failed to read {}", input.display()))?;
+    
+    let programs = parse_and_lower(&source)
+        .with_context(|| "Failed to parse and lower")?;
+    
+    if programs.is_empty() {
+        anyhow::bail!("No functions found in input");
     }
-    if cli.no_fusion {
-        config.enable_fusion = false;
+    
+    let program = &programs[0];
+    let analyzer = DependenceAnalysis::new();
+    let dep_list = analyzer.analyze(program).unwrap_or_default();
+    let dep_graph = DependenceGraph::from_dependences(dep_list.clone(), program);
+    
+    // Count dependence types
+    let num_flow = dep_list.iter().filter(|d| d.kind == polyopt::analysis::DependenceKind::Flow).count();
+    let num_anti = dep_list.iter().filter(|d| d.kind == polyopt::analysis::DependenceKind::Anti).count();
+    let num_output = dep_list.iter().filter(|d| d.kind == polyopt::analysis::DependenceKind::Output).count();
+    let num_loop_carried = dep_list.iter().filter(|d| d.is_loop_carried()).count();
+    
+    if json {
+        // JSON output
+        println!("{{");
+        println!("  \"name\": \"{}\",", program.name);
+        println!("  \"statements\": {},", program.statements.len());
+        println!("  \"parameters\": {:?},", program.parameters);
+        println!("  \"dependences\": {},", dep_list.len());
+        println!("  \"flow_deps\": {},", num_flow);
+        println!("  \"anti_deps\": {},", num_anti);
+        println!("  \"output_deps\": {},", num_output);
+        
+        // Find parallel loops
+        let max_depth = program.statements.iter().map(|s| s.depth()).max().unwrap_or(0);
+        let parallel_levels: Vec<usize> = (0..max_depth)
+            .filter(|&level| dep_graph.is_parallel_at(level))
+            .collect();
+        println!("  \"parallel_levels\": {:?}", parallel_levels);
+        println!("}}");
+    } else {
+        // Human-readable output
+        println!("=== Analysis: {} ===\n", program.name);
+        println!("Statements: {}", program.statements.len());
+        println!("Parameters: {:?}", program.parameters);
+        println!("Arrays: {:?}", program.arrays.iter().map(|a| &a.name).collect::<Vec<_>>());
+        
+        if deps || stats {
+            println!("\n--- Dependences ---");
+            println!("Total: {}", dep_list.len());
+            println!("  Flow (RAW): {}", num_flow);
+            println!("  Anti (WAR): {}", num_anti);
+            println!("  Output (WAW): {}", num_output);
+            println!("  Loop-carried: {}", num_loop_carried);
+            println!("  Loop-independent: {}", dep_list.len() - num_loop_carried);
+            
+            if deps {
+                println!("\nDependence details:");
+                for (i, dep) in dep_list.iter().enumerate().take(20) {
+                    let kind = match dep.kind {
+                        polyopt::analysis::DependenceKind::Flow => "Flow",
+                        polyopt::analysis::DependenceKind::Anti => "Anti",
+                        polyopt::analysis::DependenceKind::Output => "Output",
+                        polyopt::analysis::DependenceKind::Input => "Input",
+                    };
+                    println!("  [{}] {} on {}: S{} -> S{}", 
+                        i, kind, dep.array, dep.source.0, dep.target.0);
+                    if let Some(ref dist) = dep.distance {
+                        println!("       distance: {:?}", dist);
+                    }
+                }
+                if dep_list.len() > 20 {
+                    println!("  ... and {} more", dep_list.len() - 20);
+                }
+            }
+        }
+        
+        if parallel {
+            println!("\n--- Parallelism ---");
+            let max_depth = program.statements.iter().map(|s| s.depth()).max().unwrap_or(0);
+            for level in 0..max_depth {
+                let is_parallel = dep_graph.is_parallel_at(level);
+                let marker = if is_parallel { "✓" } else { "✗" };
+                println!("  Level {}: {} {}", level, marker, 
+                    if is_parallel { "PARALLEL" } else { "sequential" });
+            }
+            
+            if let Some(level) = analyzer.find_parallel_level(&dep_list, max_depth) {
+                println!("\nRecommendation: Parallelize at level {}", level);
+            } else {
+                println!("\nNo directly parallelizable loops found");
+                println!("Consider applying transformations (tiling, skewing)");
+            }
+        }
     }
-    if cli.no_auto_schedule {
-        config.enable_auto_schedule = false;
-    }
-    if cli.no_parallel {
-        config.enable_parallelization = false;
-    }
-    if cli.no_vectorize {
-        config.enable_vectorization = false;
-    }
-    if let Some(ref sizes) = cli.tile_sizes {
-        config.tile_sizes = sizes.clone();
-    }
-
-    config.target = cli.target.into();
-    config.verbosity = cli.verbose;
-
-    #[cfg(feature = "autotuning")]
-    {
-        config.enable_autotuning = cli.autotune;
-    }
-
-    #[cfg(feature = "ml")]
-    {
-        config.enable_ml_scheduling = cli.ml_schedule;
-    }
-
-    config
+    
+    Ok(())
 }
 
-fn write_output(path: &Option<PathBuf>, content: &str) -> Result<()> {
-    match path {
-        Some(p) => {
-            fs::write(p, content)
-                .with_context(|| format!("Failed to write output file: {:?}", p))?;
-        }
-        None => {
-            println!("{}", content);
+fn cmd_optimize(
+    input: PathBuf,
+    output: Option<PathBuf>,
+    tile: Option<i64>,
+    schedule: ScheduleArg,
+    openmp: bool,
+) -> Result<()> {
+    let source = fs::read_to_string(&input)
+        .with_context(|| format!("Failed to read {}", input.display()))?;
+    
+    let mut programs = parse_and_lower(&source)
+        .with_context(|| "Failed to parse and lower")?;
+    
+    if programs.is_empty() {
+        anyhow::bail!("No functions found in input");
+    }
+    
+    let mut program = programs.remove(0);
+    
+    // Analyze dependencies
+    let analyzer = DependenceAnalysis::new();
+    let deps = analyzer.analyze(&program).unwrap_or_default();
+    
+    eprintln!("Optimizing {} with {} statements...", program.name, program.statements.len());
+    eprintln!("Found {} dependences", deps.len());
+    
+    // Apply scheduling
+    let scheduler = Scheduler::new()
+        .with_algorithm(schedule.into());
+    scheduler.schedule(&mut program, &deps).ok();
+    eprintln!("Applied {:?} scheduling", schedule);
+    
+    // Apply tiling if requested
+    if let Some(tile_size) = tile {
+        let depth = program.statements.first().map(|s| s.depth()).unwrap_or(0);
+        if depth > 0 {
+            let tiling = Tiling::with_default_size(depth, tile_size);
+            for stmt in &mut program.statements {
+                stmt.schedule = tiling.apply_to_schedule(&stmt.schedule);
+            }
+            eprintln!("Applied tiling with size {}", tile_size);
         }
     }
+    
+    // Generate code
+    let codegen = CCodeGen::new(openmp);
+    let code = codegen.generate(&program)?;
+    
+    // Output
+    if let Some(out_path) = output {
+        fs::write(&out_path, &code)
+            .with_context(|| format!("Failed to write {}", out_path.display()))?;
+        eprintln!("Wrote optimized code to {}", out_path.display());
+    } else {
+        print!("{}", code);
+    }
+    
+    Ok(())
+}
+
+fn cmd_parse(input: PathBuf, hir: bool, pir: bool) -> Result<()> {
+    let source = fs::read_to_string(&input)
+        .with_context(|| format!("Failed to read {}", input.display()))?;
+    
+    if pir {
+        let programs = parse_and_lower(&source)
+            .with_context(|| "Failed to parse and lower")?;
+        
+        for program in &programs {
+            println!("=== Polyhedral IR: {} ===", program.name);
+            println!("Parameters: {:?}", program.parameters);
+            println!("Arrays: {:?}", program.arrays.iter().map(|a| &a.name).collect::<Vec<_>>());
+            println!("\nStatements:");
+            for stmt in &program.statements {
+                println!("  {} (depth {})", stmt.name, stmt.depth());
+                println!("    Domain: {} dims, {} constraints", 
+                    stmt.domain.dim(), stmt.domain.constraints.constraints.len());
+                println!("    Schedule: {} in, {} out",
+                    stmt.schedule.n_in(), stmt.schedule.n_out());
+                println!("    Reads: {:?}", stmt.reads.iter().map(|r| &r.array).collect::<Vec<_>>());
+                println!("    Writes: {:?}", stmt.writes.iter().map(|w| &w.array).collect::<Vec<_>>());
+            }
+        }
+    } else if hir {
+        let hir_programs = polyopt::lower_to_hir(&source)
+            .with_context(|| "Failed to parse and lower to HIR")?;
+        
+        for func in &hir_programs {
+            println!("=== HIR: {} ===", func.name);
+            println!("Parameters: {}", func.params.len());
+            println!("Body statements: {}", func.body.statements.len());
+        }
+    } else {
+        let ast = parse(&source)
+            .with_context(|| "Failed to parse")?;
+        
+        println!("=== AST ===");
+        println!("Functions: {}", ast.functions.len());
+        for func in &ast.functions {
+            println!("  func {} ({} params)", func.name, func.params.len());
+        }
+    }
+    
+    Ok(())
+}
+
+fn cmd_bench(input: PathBuf, size: i64, iterations: usize, openmp: bool) -> Result<()> {
+    let source = fs::read_to_string(&input)
+        .with_context(|| format!("Failed to read {}", input.display()))?;
+    
+    let programs = parse_and_lower(&source)
+        .with_context(|| "Failed to parse and lower")?;
+    
+    if programs.is_empty() {
+        anyhow::bail!("No functions found in input");
+    }
+    
+    let program = &programs[0];
+    
+    println!("=== Benchmark: {} ===", program.name);
+    println!("Size: N = {}", size);
+    println!("Iterations: {}", iterations);
+    println!("OpenMP: {}", if openmp { "enabled" } else { "disabled" });
+    println!();
+    
+    // Generate benchmark code
+    let code = generate_benchmark(program, openmp)?;
+    
+    // Write to temp file
+    let temp_dir = std::env::temp_dir();
+    let c_file = temp_dir.join("polyopt_bench.c");
+    let exe_file = temp_dir.join("polyopt_bench");
+    
+    fs::write(&c_file, &code)?;
+    
+    // Compile
+    let compiler = "gcc";
+    let mut compile_args = vec![
+        "-O3", "-march=native",
+        c_file.to_str().unwrap(),
+        "-o", exe_file.to_str().unwrap(),
+        "-lm"
+    ];
+    if openmp {
+        compile_args.push("-fopenmp");
+    }
+    
+    println!("Compiling with: {} {}", compiler, compile_args.join(" "));
+    
+    let compile_status = std::process::Command::new(compiler)
+        .args(&compile_args)
+        .status();
+    
+    match compile_status {
+        Ok(status) if status.success() => {
+            println!("Compilation successful\n");
+            
+            // Run benchmark
+            println!("Running {} iterations...\n", iterations);
+            for i in 0..iterations {
+                let output = std::process::Command::new(&exe_file)
+                    .arg(size.to_string())
+                    .output()?;
+                
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                print!("  Run {}: {}", i + 1, stdout);
+            }
+        }
+        Ok(_) => {
+            eprintln!("Compilation failed");
+            eprintln!("Generated code saved to: {}", c_file.display());
+        }
+        Err(e) => {
+            eprintln!("Could not run compiler: {}", e);
+            eprintln!("Generated code saved to: {}", c_file.display());
+        }
+    }
+    
     Ok(())
 }

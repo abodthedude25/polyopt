@@ -96,6 +96,13 @@ pub fn parse_and_lower(source: &str) -> Result<Vec<ir::PolyProgram>> {
     lower_hir(&hir)
 }
 
+/// Parse and lower to HIR only.
+pub fn lower_to_hir(source: &str) -> Result<Vec<ir::hir::HirFunction>> {
+    let ast = parse(source)?;
+    let hir = lower_ast(&ast)?;
+    Ok(hir.functions)
+}
+
 /// Configuration for the optimization pipeline.
 #[derive(Debug, Clone)]
 pub struct OptimizationConfig {

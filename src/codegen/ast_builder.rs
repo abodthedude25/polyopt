@@ -1,220 +1,333 @@
-//! AST builder for generating loop nests from schedules.
+//! AST builder for code generation.
+//!
+//! This module provides an intermediate AST representation that bridges
+//! the polyhedral representation and the final code output.
 
-use crate::ir::pir::{PolyProgram, PolyStmt, StmtId};
-use crate::polyhedral::set::IntegerSet;
-use crate::polyhedral::map::AffineMap;
+use crate::ir::pir::StmtId;
 
-/// A node in the generated AST.
+/// AST node for generated code.
 #[derive(Debug, Clone)]
 pub enum AstNode {
     /// A for loop
-    For {
+    Loop {
+        /// Loop iterator variable
         iterator: String,
+        /// Lower bound expression
         lower: AstExpr,
+        /// Upper bound expression
         upper: AstExpr,
+        /// Loop step
         step: i64,
+        /// Loop body
         body: Vec<AstNode>,
+        /// Is this loop parallel?
         is_parallel: bool,
     },
-    /// An if statement
+    /// Conditional
     If {
+        /// Condition expression
         condition: AstExpr,
+        /// Then branch
         then_body: Vec<AstNode>,
+        /// Optional else branch
         else_body: Option<Vec<AstNode>>,
     },
-    /// A statement instance
-    Stmt {
+    /// Statement invocation
+    Statement {
+        /// Statement ID
         id: StmtId,
+        /// Iterator values
         iterators: Vec<AstExpr>,
     },
-    /// A block of statements
+    /// Block of statements
     Block {
+        /// Statements in block
         statements: Vec<AstNode>,
     },
+    /// Raw code (for custom insertions)
+    Raw(String),
 }
 
-/// An expression in the generated AST.
+/// Expression in the generated AST.
 #[derive(Debug, Clone)]
 pub enum AstExpr {
     /// Integer constant
     Int(i64),
-    /// Variable
+    /// Variable reference
     Var(String),
     /// Binary operation
     Binary {
+        /// Operator
         op: AstBinOp,
+        /// Left operand
         left: Box<AstExpr>,
+        /// Right operand
         right: Box<AstExpr>,
     },
-    /// Minimum
-    Min(Box<AstExpr>, Box<AstExpr>),
-    /// Maximum
-    Max(Box<AstExpr>, Box<AstExpr>),
     /// Floor division
     FloorDiv(Box<AstExpr>, Box<AstExpr>),
     /// Ceiling division
     CeilDiv(Box<AstExpr>, Box<AstExpr>),
+    /// Minimum of two expressions
+    Min(Box<AstExpr>, Box<AstExpr>),
+    /// Maximum of two expressions
+    Max(Box<AstExpr>, Box<AstExpr>),
+    /// Modulo operation
+    Mod(Box<AstExpr>, Box<AstExpr>),
 }
 
 impl AstExpr {
+    /// Create integer constant.
     pub fn int(v: i64) -> Self { Self::Int(v) }
-    pub fn var(name: &str) -> Self { Self::Var(name.to_string()) }
     
+    /// Create variable reference.
+    pub fn var(name: &str) -> Self { Self::Var(name.to_string()) }
+
+    /// Create addition.
     pub fn add(self, other: Self) -> Self {
         Self::Binary { op: AstBinOp::Add, left: Box::new(self), right: Box::new(other) }
     }
-    
+
+    /// Create subtraction.
     pub fn sub(self, other: Self) -> Self {
         Self::Binary { op: AstBinOp::Sub, left: Box::new(self), right: Box::new(other) }
     }
-    
+
+    /// Create multiplication.
     pub fn mul(self, other: Self) -> Self {
         Self::Binary { op: AstBinOp::Mul, left: Box::new(self), right: Box::new(other) }
     }
+
+    /// Create division.
+    pub fn div(self, other: Self) -> Self {
+        Self::Binary { op: AstBinOp::Div, left: Box::new(self), right: Box::new(other) }
+    }
+
+    /// Create floor division.
+    pub fn floordiv(self, other: Self) -> Self {
+        Self::FloorDiv(Box::new(self), Box::new(other))
+    }
+
+    /// Create ceiling division.
+    pub fn ceildiv(self, other: Self) -> Self {
+        Self::CeilDiv(Box::new(self), Box::new(other))
+    }
+
+    /// Create minimum.
+    pub fn min(self, other: Self) -> Self {
+        Self::Min(Box::new(self), Box::new(other))
+    }
+
+    /// Create maximum.
+    pub fn max(self, other: Self) -> Self {
+        Self::Max(Box::new(self), Box::new(other))
+    }
+
+    /// Check if this is a constant.
+    pub fn is_constant(&self) -> bool {
+        matches!(self, Self::Int(_))
+    }
+
+    /// Try to evaluate as constant.
+    pub fn eval_constant(&self) -> Option<i64> {
+        match self {
+            Self::Int(v) => Some(*v),
+            Self::Binary { op, left, right } => {
+                let l = left.eval_constant()?;
+                let r = right.eval_constant()?;
+                Some(match op {
+                    AstBinOp::Add => l + r,
+                    AstBinOp::Sub => l - r,
+                    AstBinOp::Mul => l * r,
+                    AstBinOp::Div => l / r,
+                    _ => return None,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// Simplify the expression.
+    pub fn simplify(self) -> Self {
+        match self {
+            Self::Binary { op, left, right } => {
+                let l = left.simplify();
+                let r = right.simplify();
+                
+                // Constant folding
+                if let (Some(lv), Some(rv)) = (l.eval_constant(), r.eval_constant()) {
+                    let result = match op {
+                        AstBinOp::Add => lv + rv,
+                        AstBinOp::Sub => lv - rv,
+                        AstBinOp::Mul => lv * rv,
+                        AstBinOp::Div if rv != 0 => lv / rv,
+                        _ => return Self::Binary { op, left: Box::new(l), right: Box::new(r) },
+                    };
+                    return Self::Int(result);
+                }
+
+                // Identity simplifications
+                match (&op, l.eval_constant(), r.eval_constant()) {
+                    (AstBinOp::Add, Some(0), _) => return r,
+                    (AstBinOp::Add, _, Some(0)) => return l,
+                    (AstBinOp::Sub, _, Some(0)) => return l,
+                    (AstBinOp::Mul, Some(1), _) => return r,
+                    (AstBinOp::Mul, _, Some(1)) => return l,
+                    (AstBinOp::Mul, Some(0), _) | (AstBinOp::Mul, _, Some(0)) => return Self::Int(0),
+                    (AstBinOp::Div, _, Some(1)) => return l,
+                    _ => {}
+                }
+
+                Self::Binary { op, left: Box::new(l), right: Box::new(r) }
+            }
+            Self::Min(a, b) => {
+                let a = a.simplify();
+                let b = b.simplify();
+                if let (Some(av), Some(bv)) = (a.eval_constant(), b.eval_constant()) {
+                    return Self::Int(av.min(bv));
+                }
+                Self::Min(Box::new(a), Box::new(b))
+            }
+            Self::Max(a, b) => {
+                let a = a.simplify();
+                let b = b.simplify();
+                if let (Some(av), Some(bv)) = (a.eval_constant(), b.eval_constant()) {
+                    return Self::Int(av.max(bv));
+                }
+                Self::Max(Box::new(a), Box::new(b))
+            }
+            other => other,
+        }
+    }
 }
 
-#[derive(Debug, Clone, Copy)]
+/// Binary operators.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AstBinOp {
-    Add, Sub, Mul, Div, Mod,
-    Lt, Le, Gt, Ge, Eq, Ne,
-    And, Or,
+    /// Addition
+    Add,
+    /// Subtraction
+    Sub,
+    /// Multiplication
+    Mul,
+    /// Division
+    Div,
+    /// Modulo
+    Mod,
+    /// Less than
+    Lt,
+    /// Less than or equal
+    Le,
+    /// Greater than
+    Gt,
+    /// Greater than or equal
+    Ge,
+    /// Equal
+    Eq,
+    /// Not equal
+    Ne,
+    /// Logical and
+    And,
+    /// Logical or
+    Or,
 }
 
-/// AST builder using polyhedral scanning.
+/// AST builder for constructing code AST from schedules.
 pub struct AstBuilder {
-    /// Generated AST nodes
     nodes: Vec<AstNode>,
-    /// Current loop iterators
-    iterators: Vec<String>,
-    /// Iterator counter for generating names
-    iter_counter: usize,
 }
 
 impl AstBuilder {
+    /// Create a new AST builder.
     pub fn new() -> Self {
-        Self {
-            nodes: Vec::new(),
-            iterators: Vec::new(),
-            iter_counter: 0,
-        }
+        Self { nodes: vec![] }
     }
 
-    /// Build AST from a polyhedral program.
-    pub fn build(&mut self, program: &PolyProgram) -> Vec<AstNode> {
-        // Simplified implementation: generate one loop nest per statement
-        // Real implementation needs proper schedule tree construction
-        
-        for stmt in &program.statements {
-            let node = self.build_stmt_loop_nest(stmt, program);
-            self.nodes.push(node);
-        }
-
-        std::mem::take(&mut self.nodes)
-    }
-
-    /// Build loop nest for a single statement.
-    fn build_stmt_loop_nest(&mut self, stmt: &PolyStmt, program: &PolyProgram) -> AstNode {
-        let depth = stmt.depth();
-        let dim_names = stmt.domain.dim_names();
-
-        // Build nested loops from outside in
-        self.build_loops_recursive(stmt, program, 0, depth, &dim_names)
-    }
-
-    fn build_loops_recursive(
+    /// Add a loop to the AST.
+    pub fn add_loop(
         &mut self,
-        stmt: &PolyStmt,
-        program: &PolyProgram,
-        current_depth: usize,
-        total_depth: usize,
-        dim_names: &[String],
-    ) -> AstNode {
-        if current_depth >= total_depth {
-            // Base case: generate statement
-            let iterators = dim_names.iter()
-                .map(|n| AstExpr::var(n))
-                .collect();
-            return AstNode::Stmt {
-                id: stmt.id,
-                iterators,
-            };
-        }
-
-        let var_name = dim_names.get(current_depth)
-            .cloned()
-            .unwrap_or_else(|| format!("c{}", current_depth));
-
-        // Get bounds from parameters (simplified)
-        let lower = AstExpr::int(0);
-        let upper = if current_depth < program.parameters.len() {
-            AstExpr::var(&program.parameters[current_depth])
-        } else {
-            AstExpr::var("N")
-        };
-
-        let body = self.build_loops_recursive(stmt, program, current_depth + 1, total_depth, dim_names);
-
-        AstNode::For {
-            iterator: var_name,
+        iterator: &str,
+        lower: AstExpr,
+        upper: AstExpr,
+        step: i64,
+        is_parallel: bool,
+    ) -> &mut Self {
+        self.nodes.push(AstNode::Loop {
+            iterator: iterator.to_string(),
             lower,
             upper,
-            step: 1,
-            body: vec![body],
-            is_parallel: current_depth == 0, // Mark outermost as parallel candidate
-        }
+            step,
+            body: vec![],
+            is_parallel,
+        });
+        self
     }
 
-    /// Generate a fresh iterator name.
-    fn fresh_iter(&mut self) -> String {
-        let name = format!("c{}", self.iter_counter);
-        self.iter_counter += 1;
-        name
+    /// Add a statement invocation.
+    pub fn add_statement(&mut self, id: StmtId, iterators: Vec<AstExpr>) -> &mut Self {
+        self.nodes.push(AstNode::Statement { id, iterators });
+        self
+    }
+
+    /// Add raw code.
+    pub fn add_raw(&mut self, code: &str) -> &mut Self {
+        self.nodes.push(AstNode::Raw(code.to_string()));
+        self
+    }
+
+    /// Build the final AST.
+    pub fn build(self) -> Vec<AstNode> {
+        self.nodes
     }
 }
 
 impl Default for AstBuilder {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
-/// Convert AST to string (for debugging).
-pub fn ast_to_string(nodes: &[AstNode], indent: usize) -> String {
-    let mut result = String::new();
-    let prefix = "  ".repeat(indent);
-
-    for node in nodes {
-        match node {
-            AstNode::For { iterator, lower, upper, step, body, is_parallel } => {
-                if *is_parallel {
-                    result.push_str(&format!("{}#parallel\n", prefix));
-                }
-                result.push_str(&format!(
-                    "{}for {} = {:?} to {:?} step {} {{\n",
-                    prefix, iterator, lower, upper, step
-                ));
-                result.push_str(&ast_to_string(body, indent + 1));
-                result.push_str(&format!("{}}}\n", prefix));
-            }
-            AstNode::If { condition, then_body, else_body } => {
-                result.push_str(&format!("{}if {:?} {{\n", prefix, condition));
-                result.push_str(&ast_to_string(then_body, indent + 1));
-                result.push_str(&format!("{}}}", prefix));
-                if let Some(else_b) = else_body {
-                    result.push_str(" else {\n");
-                    result.push_str(&ast_to_string(else_b, indent + 1));
-                    result.push_str(&format!("{}}}", prefix));
-                }
-                result.push('\n');
-            }
-            AstNode::Stmt { id, iterators } => {
-                result.push_str(&format!("{}S{}({:?});\n", prefix, id.0, iterators));
-            }
-            AstNode::Block { statements } => {
-                result.push_str(&ast_to_string(statements, indent));
-            }
+/// Convert AST expression to C code string.
+pub fn expr_to_c(expr: &AstExpr) -> String {
+    match expr {
+        AstExpr::Int(v) => v.to_string(),
+        AstExpr::Var(name) => name.clone(),
+        AstExpr::Binary { op, left, right } => {
+            let l = expr_to_c(left);
+            let r = expr_to_c(right);
+            let op_str = match op {
+                AstBinOp::Add => "+",
+                AstBinOp::Sub => "-",
+                AstBinOp::Mul => "*",
+                AstBinOp::Div => "/",
+                AstBinOp::Mod => "%",
+                AstBinOp::Lt => "<",
+                AstBinOp::Le => "<=",
+                AstBinOp::Gt => ">",
+                AstBinOp::Ge => ">=",
+                AstBinOp::Eq => "==",
+                AstBinOp::Ne => "!=",
+                AstBinOp::And => "&&",
+                AstBinOp::Or => "||",
+            };
+            format!("({} {} {})", l, op_str, r)
+        }
+        AstExpr::FloorDiv(a, b) => {
+            format!("FLOOR_DIV({}, {})", expr_to_c(a), expr_to_c(b))
+        }
+        AstExpr::CeilDiv(a, b) => {
+            format!("CEIL_DIV({}, {})", expr_to_c(a), expr_to_c(b))
+        }
+        AstExpr::Min(a, b) => {
+            format!("MIN({}, {})", expr_to_c(a), expr_to_c(b))
+        }
+        AstExpr::Max(a, b) => {
+            format!("MAX({}, {})", expr_to_c(a), expr_to_c(b))
+        }
+        AstExpr::Mod(a, b) => {
+            format!("({} % {})", expr_to_c(a), expr_to_c(b))
         }
     }
-
-    result
 }
 
 #[cfg(test)]
@@ -222,8 +335,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_ast_expr() {
-        let e = AstExpr::var("i").add(AstExpr::int(1));
-        assert!(matches!(e, AstExpr::Binary { op: AstBinOp::Add, .. }));
+    fn test_ast_expr_simplify() {
+        // 0 + x = x
+        let expr = AstExpr::int(0).add(AstExpr::var("x"));
+        let simplified = expr.simplify();
+        assert!(matches!(simplified, AstExpr::Var(ref s) if s == "x"));
+
+        // x * 1 = x
+        let expr = AstExpr::var("x").mul(AstExpr::int(1));
+        let simplified = expr.simplify();
+        assert!(matches!(simplified, AstExpr::Var(ref s) if s == "x"));
+
+        // 2 + 3 = 5
+        let expr = AstExpr::int(2).add(AstExpr::int(3));
+        let simplified = expr.simplify();
+        assert!(matches!(simplified, AstExpr::Int(5)));
+    }
+
+    #[test]
+    fn test_expr_to_c() {
+        let expr = AstExpr::var("i").add(AstExpr::int(1));
+        assert_eq!(expr_to_c(&expr), "(i + 1)");
+
+        let expr = AstExpr::var("i").floordiv(AstExpr::int(32));
+        assert_eq!(expr_to_c(&expr), "FLOOR_DIV(i, 32)");
+    }
+
+    #[test]
+    fn test_ast_builder() {
+        let mut builder = AstBuilder::new();
+        builder
+            .add_loop("i", AstExpr::int(0), AstExpr::var("N"), 1, true)
+            .add_statement(StmtId::new(0), vec![AstExpr::var("i")]);
+        
+        let ast = builder.build();
+        assert_eq!(ast.len(), 2);
     }
 }
