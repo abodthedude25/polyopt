@@ -1,4 +1,4 @@
-git add .//! Polyhedral operations: projection, intersection, union, etc.
+//! Polyhedral operations: projection, intersection, union, etc.
 
 use crate::polyhedral::set::IntegerSet;
 use crate::polyhedral::map::AffineMap;

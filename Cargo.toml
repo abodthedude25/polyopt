@@ -99,7 +99,7 @@ path = "src/main.rs"
 [[bin]]
 name = "polyvis"
 path = "src/bin/visualizer.rs"
-# required-features = ["visualization"]  # Optional for SVG output
+required-features = ["visualization"]
 
 [profile.release]
 lto = true
