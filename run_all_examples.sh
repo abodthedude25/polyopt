@@ -45,16 +45,22 @@ echo -e "${BOLD}${BLUE}═══════════════════
 echo ""
 
 echo -e "${YELLOW}Building PolyOpt...${NC}"
-cargo build --release --bin polyopt --bin polyvis 2>/dev/null || cargo build --bin polyopt --bin polyvis
+cargo build --release --bin polyopt --bin polyvis --features visualization 2>/dev/null || cargo build --bin polyopt --bin polyvis --features visualization 2>/dev/null || cargo build --release --bin polyopt 2>/dev/null || cargo build --bin polyopt
 echo -e "${GREEN}✓ Build complete${NC}"
 echo ""
 
 # Detect binary location
 if [ -f "./target/release/polyopt" ]; then
     POLYOPT="./target/release/polyopt"
-    POLYVIS="./target/release/polyvis"
 else
     POLYOPT="./target/debug/polyopt"
+fi
+
+# POLYVIS is optional (requires --features visualization)
+POLYVIS=""
+if [ -f "./target/release/polyvis" ]; then
+    POLYVIS="./target/release/polyvis"
+elif [ -f "./target/debug/polyvis" ]; then
     POLYVIS="./target/debug/polyvis"
 fi
 
@@ -115,8 +121,8 @@ run_example() {
         echo "$analysis" | sed 's/^/  /'
     fi
     
-    # 3. Visualize (unless --quick)
-    if ! $QUICK; then
+    # 3. Visualize (unless --quick or POLYVIS unavailable)
+    if ! $QUICK && [ -n "$POLYVIS" ]; then
         echo -e "${YELLOW}▶ Visualizing iteration space...${NC}"
         # Determine parameters based on file
         local params="N=6"
@@ -130,6 +136,8 @@ run_example() {
         if [ -n "$vis" ]; then
             echo "$vis" | grep -E "(Statement|Iterations|Dependences|Parallel|●|Domain)" | head -10 | sed 's/^/  /'
         fi
+    elif ! $QUICK; then
+        echo -e "${YELLOW}▶ Visualization skipped (polyvis not built)${NC}"
     fi
     
     # 4. Generate code (if --compile or always show snippet)
