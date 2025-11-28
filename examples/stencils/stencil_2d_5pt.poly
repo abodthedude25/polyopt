@@ -1,0 +1,12 @@
+// 2D 5-Point Stencil (Star Pattern)
+// Classic pattern for heat diffusion, Laplacian operator
+// B[i][j] = (A[i-1][j] + A[i+1][j] + A[i][j-1] + A[i][j+1] + A[i][j]) / 5
+// Demonstrates: 2D stencil access pattern
+
+func stencil_2d_5pt(A[N][N], B[N][N]) {
+    for i = 1 to N-1 {
+        for j = 1 to N-1 {
+            B[i][j] = (A[i-1][j] + A[i+1][j] + A[i][j-1] + A[i][j+1] + A[i][j]) / 5.0;
+        }
+    }
+}

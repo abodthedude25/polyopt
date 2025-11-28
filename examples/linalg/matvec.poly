@@ -1,0 +1,17 @@
+// Matrix-Vector Multiplication: y[i] = sum_j(A[i][j] * x[j])
+// Outer loop is parallelizable, inner loop is a reduction
+// Demonstrates: reduction pattern, mixed parallelism
+
+func matvec(A[N][M], x[M], y[N]) {
+    // Initialize output
+    for i = 0 to N {
+        y[i] = 0.0;
+    }
+    
+    // Compute y = A * x
+    for i = 0 to N {
+        for j = 0 to M {
+            y[i] = y[i] + A[i][j] * x[j];
+        }
+    }
+}

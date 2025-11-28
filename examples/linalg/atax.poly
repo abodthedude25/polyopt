@@ -1,0 +1,26 @@
+// ATAX: y = A^T * A * x (from PolyBench)
+// Computes product of transpose(A) with A, then with x
+// tmp = A * x, then y = A^T * tmp
+// Demonstrates: chained matrix operations, multiple loop nests
+
+func atax(A[N][M], x[M], y[M], tmp[N]) {
+    // Initialize y to zero
+    for i = 0 to M {
+        y[i] = 0.0;
+    }
+    
+    // Compute tmp = A * x and accumulate y = A^T * tmp
+    for i = 0 to N {
+        tmp[i] = 0.0;
+        
+        // tmp[i] = sum_j(A[i][j] * x[j])
+        for j = 0 to M {
+            tmp[i] = tmp[i] + A[i][j] * x[j];
+        }
+        
+        // y[j] += A[i][j] * tmp[i] (accumulate A^T * tmp)
+        for j = 0 to M {
+            y[j] = y[j] + A[i][j] * tmp[i];
+        }
+    }
+}

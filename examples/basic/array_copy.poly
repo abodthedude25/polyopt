@@ -1,0 +1,11 @@
+// 2D Array Copy: B[i][j] = A[i][j]
+// Simple 2D loop nest - both loops are parallelizable
+// Demonstrates: nested loops, 2D arrays
+
+func array_copy(A[N][M], B[N][M]) {
+    for i = 0 to N {
+        for j = 0 to M {
+            B[i][j] = A[i][j];
+        }
+    }
+}

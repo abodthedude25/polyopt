@@ -1,0 +1,13 @@
+// Gauss-Seidel 2D Iteration (In-Place Update)
+// Updates array in-place, using newly computed values immediately
+// Has loop-carried dependencies - NOT directly parallelizable
+// Demonstrates: complex dependency pattern requiring transformation
+// Tiling or wavefront parallelization needed for parallel execution
+
+func gauss_seidel_2d(A[N][N]) {
+    for i = 1 to N-1 {
+        for j = 1 to N-1 {
+            A[i][j] = 0.25 * (A[i-1][j] + A[i+1][j] + A[i][j-1] + A[i][j+1]);
+        }
+    }
+}

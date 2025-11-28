@@ -1,0 +1,17 @@
+// 2D 9-Point Stencil (Box Pattern)
+// Includes all 8 neighbors plus center point
+// Used for more accurate Laplacian approximation
+// Demonstrates: complex stencil with diagonal accesses
+
+func stencil_2d_9pt(A[N][N], B[N][N]) {
+    for i = 1 to N-1 {
+        for j = 1 to N-1 {
+            // Corner neighbors
+            B[i][j] = A[i-1][j-1] + A[i-1][j+1] + A[i+1][j-1] + A[i+1][j+1];
+            // Edge neighbors  
+            B[i][j] = B[i][j] + A[i-1][j] + A[i+1][j] + A[i][j-1] + A[i][j+1];
+            // Center
+            B[i][j] = (B[i][j] + A[i][j]) / 9.0;
+        }
+    }
+}

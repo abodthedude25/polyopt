@@ -1,0 +1,10 @@
+// 1D 3-Point Stencil: B[i] = (A[i-1] + A[i] + A[i+1]) / 3
+// Classic stencil pattern used in smoothing/filtering
+// Demonstrates: shifted array accesses, data dependencies
+// Note: The inner loop has no loop-carried dependencies
+
+func stencil_1d(A[N], B[N]) {
+    for i = 1 to N-1 {
+        B[i] = (A[i-1] + A[i] + A[i+1]) / 3.0;
+    }
+}

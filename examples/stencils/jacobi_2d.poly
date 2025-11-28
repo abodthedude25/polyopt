@@ -1,0 +1,12 @@
+// Jacobi 2D Iteration (Single Timestep)
+// Classic iterative solver for PDEs
+// Reads from A, writes to B (double buffering)
+// Demonstrates: stencil with separate read/write arrays (parallelizable)
+
+func jacobi_2d(A[N][N], B[N][N]) {
+    for i = 1 to N-1 {
+        for j = 1 to N-1 {
+            B[i][j] = 0.25 * (A[i-1][j] + A[i+1][j] + A[i][j-1] + A[i][j+1]);
+        }
+    }
+}

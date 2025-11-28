@@ -1,0 +1,24 @@
+// Matrix Multiplication: C[i][j] = sum_k(A[i][k] * B[k][j])
+// The classic O(n³) algorithm
+// - Outer two loops (i,j) are parallelizable
+// - Inner loop (k) is a reduction
+// Good candidate for tiling to improve cache locality
+// Demonstrates: 3-deep loop nest, reduction, tiling opportunity
+
+func matmul(A[N][K], B[K][M], C[N][M]) {
+    // Initialize C to zero
+    for i = 0 to N {
+        for j = 0 to M {
+            C[i][j] = 0.0;
+        }
+    }
+    
+    // Compute C = A * B
+    for i = 0 to N {
+        for j = 0 to M {
+            for k = 0 to K {
+                C[i][j] = C[i][j] + A[i][k] * B[k][j];
+            }
+        }
+    }
+}

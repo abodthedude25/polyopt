@@ -1,0 +1,9 @@
+// Vector Scaling: B[i] = alpha * A[i]
+// Another simple parallel loop with a scalar multiplication
+// Demonstrates: scalar parameters, single loop nest
+
+func vector_scale(A[N], B[N]) {
+    for i = 0 to N {
+        B[i] = 2.5 * A[i];
+    }
+}

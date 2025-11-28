@@ -1,0 +1,9 @@
+// Vector Addition: C[i] = A[i] + B[i]
+// This is the simplest example - a single parallel loop
+// All iterations are independent, making this trivially parallelizable
+
+func vector_add(A[N], B[N], C[N]) {
+    for i = 0 to N {
+        C[i] = A[i] + B[i];
+    }
+}

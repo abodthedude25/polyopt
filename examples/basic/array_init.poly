@@ -1,0 +1,11 @@
+// Array Initialization with Index-Dependent Values
+// A[i][j] = i * N + j (linearized index)
+// Demonstrates: expressions with loop variables
+
+func array_init(A[N][N]) {
+    for i = 0 to N {
+        for j = 0 to N {
+            A[i][j] = i * N + j;
+        }
+    }
+}

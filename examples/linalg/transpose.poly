@@ -1,0 +1,12 @@
+// Matrix Transpose: B[j][i] = A[i][j]
+// Simple but important operation for data layout optimization
+// Both loops are parallelizable
+// Demonstrates: transposed array access pattern
+
+func transpose(A[N][M], B[M][N]) {
+    for i = 0 to N {
+        for j = 0 to M {
+            B[j][i] = A[i][j];
+        }
+    }
+}

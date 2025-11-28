@@ -1,0 +1,14 @@
+// Embarrassingly Parallel: Independent Element-wise Operations
+// All iterations are independent - perfect parallelism
+// C[i][j] = f(A[i][j], B[i][j]) where f is some function
+// Demonstrates: ideal parallel pattern
+
+func elemwise_ops(A[N][M], B[N][M], C[N][M], D[N][M]) {
+    for i = 0 to N {
+        for j = 0 to M {
+            // Multiple independent operations
+            C[i][j] = A[i][j] + B[i][j];
+            D[i][j] = A[i][j] * B[i][j];
+        }
+    }
+}

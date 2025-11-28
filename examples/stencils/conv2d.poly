@@ -1,0 +1,26 @@
+// 2D Convolution with 3x3 Kernel
+// Common in image processing and CNNs
+// Output[i][j] = sum over kernel of Input[i+ki][j+kj] * Kernel[ki][kj]
+// Demonstrates: sliding window pattern, multi-dimensional stencil
+
+func conv2d_3x3(Input[N][M], Kernel[3][3], Output[N][M]) {
+    // Convolve with 3x3 kernel (valid padding)
+    for i = 1 to N-1 {
+        for j = 1 to M-1 {
+            Output[i][j] = 0.0;
+            
+            // 3x3 kernel application (unrolled for clarity)
+            Output[i][j] = Output[i][j] + Input[i-1][j-1] * Kernel[0][0];
+            Output[i][j] = Output[i][j] + Input[i-1][j]   * Kernel[0][1];
+            Output[i][j] = Output[i][j] + Input[i-1][j+1] * Kernel[0][2];
+            
+            Output[i][j] = Output[i][j] + Input[i][j-1]   * Kernel[1][0];
+            Output[i][j] = Output[i][j] + Input[i][j]     * Kernel[1][1];
+            Output[i][j] = Output[i][j] + Input[i][j+1]   * Kernel[1][2];
+            
+            Output[i][j] = Output[i][j] + Input[i+1][j-1] * Kernel[2][0];
+            Output[i][j] = Output[i][j] + Input[i+1][j]   * Kernel[2][1];
+            Output[i][j] = Output[i][j] + Input[i+1][j+1] * Kernel[2][2];
+        }
+    }
+}

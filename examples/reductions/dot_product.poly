@@ -1,0 +1,10 @@
+// Dot Product: result = sum(A[i] * B[i])
+// Classic reduction with element-wise multiplication
+// Demonstrates: combined computation and reduction
+
+func dot_product(A[N], B[N], result[1]) {
+    result[0] = 0.0;
+    for i = 0 to N {
+        result[0] = result[0] + A[i] * B[i];
+    }
+}

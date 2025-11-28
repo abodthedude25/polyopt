@@ -1,7 +1,7 @@
-// 2D Stencil computation (5-point stencil)
+// 2D Stencil computation (5-point stencil) with time iteration
 // Common in image processing and PDE solvers
 
-func stencil2d(A[N][M], B[N][M]) {
+func stencil2d(A[N][M], B[N][M], time[T]) {
     for t = 0 to T {
         for i = 1 to N-1 {
             for j = 1 to M-1 {
@@ -16,3 +16,4 @@ func stencil2d(A[N][M], B[N][M]) {
         }
     }
 }
+

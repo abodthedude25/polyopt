@@ -1,0 +1,38 @@
+// Tiling Candidate: Matrix Multiplication
+// Tiling improves cache locality by working on small blocks
+// Original: O(n³) memory traffic
+// Tiled: O(n³/B) memory traffic where B is tile size
+// Demonstrates: classic tiling optimization
+
+func tiling_candidate(A[N][N], B[N][N], C[N][N]) {
+    for i = 0 to N {
+        for j = 0 to N {
+            C[i][j] = 0.0;
+        }
+    }
+    
+    // This triple-nested loop benefits greatly from tiling
+    // Try: polyopt optimize tiling_candidate.poly --tile 32
+    for i = 0 to N {
+        for j = 0 to N {
+            for k = 0 to N {
+                C[i][j] = C[i][j] + A[i][k] * B[k][j];
+            }
+        }
+    }
+}
+
+// After tiling (conceptually):
+// for ii = 0 to N step TILE {
+//     for jj = 0 to N step TILE {
+//         for kk = 0 to N step TILE {
+//             for i = ii to min(ii+TILE, N) {
+//                 for j = jj to min(jj+TILE, N) {
+//                     for k = kk to min(kk+TILE, N) {
+//                         C[i][j] += A[i][k] * B[k][j];
+//                     }
+//                 }
+//             }
+//         }
+//     }
+// }

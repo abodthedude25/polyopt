@@ -1,0 +1,13 @@
+// Row-wise Sum: B[i] = sum_j(A[i][j])
+// Outer loop (i) is parallelizable
+// Inner loop (j) is a reduction per row
+// Demonstrates: nested parallelism with inner reduction
+
+func rowsum(A[N][M], B[N]) {
+    for i = 0 to N {
+        B[i] = 0.0;
+        for j = 0 to M {
+            B[i] = B[i] + A[i][j];
+        }
+    }
+}

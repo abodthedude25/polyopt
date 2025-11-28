@@ -1,0 +1,13 @@
+// Matrix Frobenius Norm: ||A||_F = sqrt(sum(A[i][j]^2))
+// 2D reduction pattern
+// Demonstrates: nested reduction, mathematical function
+
+func frobenius_norm(A[N][M], result[1]) {
+    result[0] = 0.0;
+    for i = 0 to N {
+        for j = 0 to M {
+            result[0] = result[0] + A[i][j] * A[i][j];
+        }
+    }
+    // Note: sqrt would be applied outside, or we'd need sqrt function
+}

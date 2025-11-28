@@ -1,0 +1,11 @@
+// Vector Sum Reduction: sum = sum(A[i])
+// Classic reduction pattern
+// Requires reduction clause for parallel execution
+// Demonstrates: simple reduction, OpenMP reduction support
+
+func vector_sum(A[N], result[1]) {
+    result[0] = 0.0;
+    for i = 0 to N {
+        result[0] = result[0] + A[i];
+    }
+}

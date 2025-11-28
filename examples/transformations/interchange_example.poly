@@ -1,0 +1,21 @@
+// Loop Interchange Candidate
+// Original: Column-major access in row-major language (bad cache behavior)
+// After interchange: Row-major access (good cache behavior)
+// Demonstrates: when loop interchange improves performance
+
+func interchange_candidate(A[N][M], B[N][M]) {
+    // Original loop order accesses A in column-major order
+    // which is cache-unfriendly in C (row-major)
+    for j = 0 to M {
+        for i = 0 to N {
+            B[i][j] = A[i][j] * 2.0;
+        }
+    }
+}
+
+// After interchange (what optimizer should produce):
+// for i = 0 to N {
+//     for j = 0 to M {
+//         B[i][j] = A[i][j] * 2.0;
+//     }
+// }

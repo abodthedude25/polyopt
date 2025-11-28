@@ -1,0 +1,14 @@
+// Triangular Matrix Solve (TRSV from BLAS)
+// Solve L * x = b for x, where L is lower triangular
+// Has strong loop-carried dependencies (sequential in nature)
+// Demonstrates: triangular iteration, sequential dependencies
+
+func trisolve(L[N][N], b[N], x[N]) {
+    for i = 0 to N {
+        x[i] = b[i];
+        for j = 0 to i {
+            x[i] = x[i] - L[i][j] * x[j];
+        }
+        x[i] = x[i] / L[i][i];
+    }
+}

@@ -1,0 +1,19 @@
+// Symmetric Matrix Multiplication (SYMM from BLAS)
+// C = alpha * A * B + beta * C, where A is symmetric
+// Only lower triangle of A is accessed
+// Demonstrates: triangular iteration space
+
+func symm(A[N][N], B[N][M], C[N][M]) {
+    for i = 0 to N {
+        for j = 0 to M {
+            // Lower triangle contribution
+            for k = 0 to i {
+                C[i][j] = C[i][j] + A[i][k] * B[k][j];
+            }
+            // Upper triangle (using symmetry A[i][k] = A[k][i])
+            for k = i+1 to N {
+                C[i][j] = C[i][j] + A[k][i] * B[k][j];
+            }
+        }
+    }
+}

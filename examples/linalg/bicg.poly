@@ -1,0 +1,22 @@
+// BiCG: Biconjugate Gradient (from PolyBench)
+// Computes q = A * p and s = A^T * r simultaneously
+// Core kernel of iterative linear solvers
+// Demonstrates: two related matrix-vector products
+
+func bicg(A[N][M], p[M], q[N], r[N], s[M]) {
+    // Initialize outputs
+    for i = 0 to M {
+        s[i] = 0.0;
+    }
+    
+    for i = 0 to N {
+        q[i] = 0.0;
+        
+        for j = 0 to M {
+            // q = A * p
+            q[i] = q[i] + A[i][j] * p[j];
+            // s = A^T * r  
+            s[j] = s[j] + A[i][j] * r[i];
+        }
+    }
+}
