@@ -1,0 +1,15 @@
+// 2D convolution
+// Common in image processing and neural networks
+
+func conv2d(Input[H][W], Kernel[KH][KW], Output[OH][OW]) {
+    for oh = 0 to OH {
+        for ow = 0 to OW {
+            Output[oh][ow] = 0;
+            for kh = 0 to KH {
+                for kw = 0 to KW {
+                    Output[oh][ow] = Output[oh][ow] + Input[oh + kh][ow + kw] * Kernel[kh][kw];
+                }
+            }
+        }
+    }
+}

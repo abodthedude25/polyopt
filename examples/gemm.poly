@@ -1,0 +1,14 @@
+// General matrix multiply with parallel annotation
+// Shows how to hint at parallelization
+
+func gemm(alpha, beta, A[N][K], B[K][M], C[N][M]) {
+    @parallel
+    for i = 0 to N {
+        for j = 0 to M {
+            C[i][j] = C[i][j] * beta;
+            for k = 0 to K {
+                C[i][j] = C[i][j] + alpha * A[i][k] * B[k][j];
+            }
+        }
+    }
+}
