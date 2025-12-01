@@ -47,6 +47,12 @@ pub mod transform;
 pub mod codegen;
 pub mod utils;
 
+// Auto-tuning framework
+pub mod autotune;
+
+// ISL integration (pure Rust simulation + optional native ISL)
+pub mod isl;
+
 // Re-export commonly used types
 pub mod prelude {
     //! Convenient re-exports of commonly used types and traits.

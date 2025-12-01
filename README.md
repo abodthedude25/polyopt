@@ -54,6 +54,120 @@ It takes programs written in a simple `.poly` language and generates optimized C
   - OpenMP parallelization pragmas
   - Vectorization hints
   - Benchmark code generation
+- **Advanced Features** (optional):
+  - **ISL Integration**: Exact polyhedral math via Integer Set Library
+  - **Auto-Tuning**: Automatic parameter optimization
+
+---
+
+## Advanced Features
+
+### ISL Integration
+
+PolyOpt can use the [Integer Set Library (ISL)](https://libisl.sourceforge.io/) for exact polyhedral computations. ISL is the same library used by LLVM's Polly and GCC's Graphite.
+
+**Installation:**
+```bash
+# macOS
+brew install isl
+
+# Ubuntu/Debian  
+apt install libisl-dev isl-utils
+
+# Fedora
+dnf install isl-devel
+```
+
+**Build with ISL support:**
+```bash
+cargo build --release --features isl
+```
+
+**Usage:**
+```bash
+# Check ISL installation
+polyopt isl input.poly --check
+
+# Analyze domains in ISL format
+polyopt isl input.poly --domain
+
+# Compute optimal schedule
+polyopt isl input.poly --schedule
+
+# Show dependences in ISL format
+polyopt isl input.poly --deps
+```
+
+**Example output:**
+```
+=== ISL Analysis: matmul ===
+
+--- Domains (ISL format) ---
+S0:
+  { [i0,i1,i2] : 0 <= i0 < N and 0 <= i1 < M and 0 <= i2 < K }
+  ISL canonical: [N, M, K] -> { [i0, i1, i2] : 0 <= i0 < N and 0 <= i1 < M and 0 <= i2 < K }
+```
+
+### Auto-Tuning Framework
+
+PolyOpt includes an auto-tuning framework that finds optimal transformation parameters by empirical search.
+
+**Build with auto-tuning:**
+```bash
+cargo build --release --features autotuning
+```
+
+**Usage:**
+```bash
+# Basic auto-tuning (60 second budget)
+polyopt autotune examples/matmul.poly -N 1000
+
+# Quick mode (30 seconds)
+polyopt autotune examples/matmul.poly --quick
+
+# Custom search parameters
+polyopt autotune examples/matmul.poly \
+  --time 120 \
+  --tiles "16,32,64,128" \
+  --threads "1,2,4,8" \
+  --search genetic
+
+# Save results to CSV
+polyopt autotune examples/matmul.poly -o results.csv
+```
+
+**Search strategies:**
+- `grid`: Exhaustive search (default, best for small spaces)
+- `random`: Random sampling (good for large spaces)
+- `genetic`: Genetic algorithm (good for complex optimization)
+
+**Example output:**
+```
+=== Auto-Tuning: matmul.poly ===
+
+Configuration:
+  Max time: 60s
+  Tile sizes: [16, 32, 64, 128]
+  Thread counts: [1, 2, 4, 8]
+  Search: Grid
+
+Baseline: 0.4521s
+[  1] t16_p1 -> 0.3892s (1.16x)
+[  2] t32_p1 -> 0.3456s (1.31x)
+[  3] t32_p4 -> 0.1234s (3.66x)
+  *** New best: t32_p4 (3.66x speedup)
+[  4] t64_p4 -> 0.0987s (4.58x)
+  *** New best: t64_p4 (4.58x speedup)
+...
+
+=== Best Configuration Found ===
+  Tile sizes: [64]
+  Threads: 4
+  Speedup: 4.58x
+
+To generate optimized code:
+  polyopt compile matmul.poly --openmp --tile 64
+```
 
 ---
 
@@ -786,6 +900,101 @@ func foo(A[N]) {
     }
 }
 ```
+
+---
+
+## Advanced Features
+
+### ISL Integration (Exact Polyhedral Math)
+
+PolyOpt includes a polyhedral math module with both a **pure Rust simulation** and optional **native ISL** support.
+
+#### Usage
+
+```bash
+# Parse and analyze an ISL set expression directly
+polyopt isl "{ [i, j] : 0 <= i < 10 and 0 <= j < 10 }" --expr --enumerate
+
+# Analyze a .poly file's domains
+polyopt isl examples/basic/array_copy.poly --domain
+
+# Generate tiled loop code
+polyopt isl "{ [i, j] : 0 <= i < N and 0 <= j < N }" --expr --tile 32
+
+# Show scheduling info
+polyopt isl examples/linalg/matmul.poly --schedule
+```
+
+#### Example Output
+
+```
+=== ISL Polyhedral Analysis ===
+
+Using: Pure Rust polyhedral simulation
+       (Install ISL for exact operations: brew install isl)
+
+Set: { [i, j] : i >= 0 and -i + 9 >= 0 and j >= 0 and -j + 9 >= 0 }
+Variables: ["i", "j"]
+Constraints: 4
+
+--- Point Enumeration ---
+    0: ([0, 0])
+    1: ([0, 1])
+    ...
+Total points: 100
+```
+
+#### Installing Native ISL (Optional)
+
+For exact polyhedral operations, install ISL:
+
+```bash
+# macOS
+brew install isl
+
+# Ubuntu/Debian
+sudo apt install libisl-dev isl-utils
+
+# Fedora
+sudo dnf install isl-devel
+```
+
+---
+
+### Auto-Tuning Framework
+
+The auto-tuner automatically searches for optimal transformation parameters by compiling and benchmarking multiple variants.
+
+#### Usage
+
+```bash
+# Basic auto-tuning with OpenMP
+polyopt autotune input.poly --openmp
+
+# Specify tile sizes to try
+polyopt autotune input.poly --tiles "8,16,32,64,128" --openmp
+
+# Use different search strategies
+polyopt autotune input.poly --strategy exhaustive  # Try all combinations
+polyopt autotune input.poly --strategy random      # Random sampling
+polyopt autotune input.poly --strategy genetic     # Genetic algorithm
+polyopt autotune input.poly --strategy annealing   # Simulated annealing
+
+# Customize benchmark parameters
+polyopt autotune input.poly -N 1000 --iterations 5 --openmp
+
+# Save results to file
+polyopt autotune input.poly -o results.csv --openmp
+```
+
+#### Search Strategies
+
+| Strategy | Description | Use When |
+|----------|-------------|----------|
+| `exhaustive` | Tests all combinations | Small search space, need optimal |
+| `random` | Random sampling (20 samples) | Quick exploration |
+| `genetic` | Evolutionary optimization | Large search space |
+| `annealing` | Simulated annealing | Avoid local minima |
 
 ---
 

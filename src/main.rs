@@ -142,6 +142,70 @@ enum Commands {
         #[arg(long)]
         openmp: bool,
     },
+    
+    /// Analyze with ISL (exact polyhedral math)
+    Isl {
+        /// Input .poly file or ISL expression
+        input: String,
+        
+        /// Parse as raw ISL set expression (not file)
+        #[arg(long)]
+        expr: bool,
+        
+        /// Show domain information
+        #[arg(long)]
+        domain: bool,
+        
+        /// Compute schedule
+        #[arg(long)]
+        schedule: bool,
+        
+        /// Show dependences
+        #[arg(long)]
+        deps: bool,
+        
+        /// Enumerate points (for small sets)
+        #[arg(long)]
+        enumerate: bool,
+        
+        /// Parameter values (e.g., N=10,M=20)
+        #[arg(long)]
+        params: Option<String>,
+        
+        /// Generate tiled code
+        #[arg(long)]
+        tile: Option<usize>,
+    },
+    
+    /// Auto-tune optimization parameters
+    Autotune {
+        /// Input .poly file
+        input: PathBuf,
+        
+        /// Output file for best configuration
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        
+        /// Tile sizes to try (comma-separated)
+        #[arg(long, default_value = "8,16,32,64,128")]
+        tiles: String,
+        
+        /// Problem size for benchmarking
+        #[arg(short = 'N', long, default_value = "500")]
+        size: usize,
+        
+        /// Number of benchmark iterations
+        #[arg(long, default_value = "3")]
+        iterations: usize,
+        
+        /// Search strategy (exhaustive, random, genetic, annealing)
+        #[arg(long, default_value = "exhaustive")]
+        strategy: String,
+        
+        /// Enable OpenMP in variants
+        #[arg(long)]
+        openmp: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -187,6 +251,12 @@ fn main() -> Result<()> {
         }
         Commands::Bench { input, size, iterations, openmp } => {
             cmd_bench(input, size, iterations, openmp)
+        }
+        Commands::Isl { input, expr, domain, schedule, deps, enumerate, params, tile } => {
+            cmd_isl(input, expr, domain, schedule, deps, enumerate, params, tile)
+        }
+        Commands::Autotune { input, output, tiles, size, iterations, strategy, openmp } => {
+            cmd_autotune(input, output, tiles, size, iterations, strategy, openmp)
         }
     }
 }
@@ -523,6 +593,269 @@ fn cmd_bench(input: PathBuf, size: i64, iterations: usize, openmp: bool) -> Resu
         Err(e) => {
             eprintln!("Could not run compiler: {}", e);
             eprintln!("Generated code saved to: {}", c_file.display());
+        }
+    }
+    
+    Ok(())
+}
+
+fn cmd_isl(
+    input: String,
+    expr: bool,
+    domain: bool,
+    schedule: bool,
+    deps: bool,
+    enumerate: bool,
+    params: Option<String>,
+    tile: Option<usize>,
+) -> Result<()> {
+    use polyopt::isl::simulation::{PolySet, codegen};
+    use polyopt::isl::is_isl_available;
+    
+    println!("=== ISL Polyhedral Analysis ===\n");
+    
+    // Check if native ISL is available
+    if is_isl_available() {
+        println!("Using: Native ISL library (iscc)");
+    } else {
+        println!("Using: Pure Rust polyhedral simulation");
+        println!("       (Install ISL for exact operations: brew install isl)");
+    }
+    println!();
+    
+    // Parse parameter values
+    let param_values: Vec<i64> = if let Some(ref p) = params {
+        p.split(',')
+            .filter_map(|s| {
+                let parts: Vec<&str> = s.split('=').collect();
+                if parts.len() == 2 {
+                    parts[1].trim().parse().ok()
+                } else {
+                    s.trim().parse().ok()
+                }
+            })
+            .collect()
+    } else {
+        vec![10] // Default N=10
+    };
+    
+    // Parse input as ISL expression or file
+    let isl_set = if expr {
+        // Direct ISL expression
+        PolySet::parse(&input).map_err(|e| anyhow::anyhow!("{}", e))?
+    } else {
+        // Read from .poly file and extract domain
+        let path = std::path::PathBuf::from(&input);
+        let source = fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read {}", path.display()))?;
+        
+        let programs = parse_and_lower(&source)?;
+        if programs.is_empty() {
+            anyhow::bail!("No functions found in input");
+        }
+        
+        // Extract domain from first statement
+        let program = &programs[0];
+        if program.statements.is_empty() {
+            anyhow::bail!("No statements found");
+        }
+        
+        let stmt = &program.statements[0];
+        let dim = stmt.domain.dim();
+        let vars: Vec<String> = (0..dim).map(|i| format!("i{}", i)).collect();
+        
+        // Build ISL-format string from constraints
+        let constraints: Vec<String> = stmt.domain.constraints.constraints.iter()
+            .map(|c| {
+                let terms: Vec<String> = c.expr.coeffs.iter().enumerate()
+                    .filter(|(_, &coeff)| coeff != 0)
+                    .map(|(i, &coeff)| {
+                        if i < vars.len() {
+                            if coeff == 1 { vars[i].clone() }
+                            else { format!("{}*{}", coeff, vars[i]) }
+                        } else {
+                            coeff.to_string()
+                        }
+                    })
+                    .collect();
+                
+                let lhs = if terms.is_empty() { "0".to_string() } else { terms.join(" + ") };
+                format!("{} >= {}", lhs, -c.expr.constant)
+            })
+            .collect();
+        
+        let isl_str = if constraints.is_empty() {
+            format!("{{ [{}] : 0 <= {} and {} < N }}", vars.join(", "), vars[0], vars[0])
+        } else {
+            format!("{{ [{}] : {} }}", vars.join(", "), constraints.join(" and "))
+        };
+        
+        println!("Extracted domain from {}: {}", program.name, stmt.name);
+        PolySet::parse(&isl_str).map_err(|e| anyhow::anyhow!("{}", e))?
+    };
+    
+    println!("Set: {}", isl_set.to_isl_string());
+    println!("Variables: {:?}", isl_set.vars);
+    println!("Parameters: {:?}", isl_set.params);
+    println!("Constraints: {}", isl_set.constraints.len());
+    println!();
+    
+    if domain || (!enumerate && !schedule && tile.is_none()) {
+        println!("--- Domain Analysis ---");
+        println!("ISL notation: {}", isl_set.to_isl_string());
+        println!("Dimensions: {}", isl_set.vars.len());
+        
+        // Check emptiness
+        let empty = isl_set.is_empty(&param_values);
+        println!("Empty (with params {:?}): {}", param_values, empty);
+    }
+    
+    if enumerate {
+        println!("\n--- Point Enumeration ---");
+        let max = if param_values.is_empty() { 10 } else { param_values[0] };
+        let points = isl_set.enumerate(&param_values, max);
+        
+        println!("Points (up to {} per dimension):", max);
+        for (i, p) in points.iter().enumerate().take(50) {
+            println!("  {:3}: ({:?})", i, p);
+        }
+        
+        if points.len() > 50 {
+            println!("  ... and {} more", points.len() - 50);
+        }
+        
+        println!("\nTotal points: {}", points.len());
+    }
+    
+    if schedule {
+        println!("\n--- Scheduling ---");
+        println!("Available algorithms:");
+        println!("  - Feautrier: Lexicographic minimum latency");
+        println!("  - Pluto: Maximize parallelism + locality");
+        
+        // Show identity schedule
+        println!("\nIdentity schedule (no transformation):");
+        let code = codegen::generate_loops(&isl_set, "// body");
+        println!("{}", code);
+    }
+    
+    if let Some(ts) = tile {
+        println!("\n--- Tiled Code Generation ---");
+        println!("Tile size: {}", ts);
+        
+        let tile_sizes = vec![ts; isl_set.vars.len()];
+        let code = codegen::generate_tiled_loops(&isl_set, "C[i][j] = A[i][j] + B[i][j];", &tile_sizes);
+        println!("{}", code);
+    }
+    
+    Ok(())
+}
+
+fn cmd_autotune(
+    input: PathBuf,
+    output: Option<PathBuf>,
+    tiles: String,
+    size: usize,
+    iterations: usize,
+    strategy: String,
+    openmp: bool,
+) -> Result<()> {
+    use polyopt::autotune::{AutoTuner, AdvancedAutoTuner, SearchStrategy, print_results};
+    
+    // Parse tile sizes
+    let tile_sizes: Vec<usize> = tiles.split(',')
+        .filter_map(|s| s.trim().parse().ok())
+        .collect();
+    
+    // Parse search strategy
+    let search_strategy = match strategy.to_lowercase().as_str() {
+        "random" => SearchStrategy::Random { samples: 20 },
+        "genetic" => SearchStrategy::Genetic { population: 10, generations: 5 },
+        "annealing" => SearchStrategy::Annealing { iterations: 50 },
+        _ => SearchStrategy::Exhaustive,
+    };
+    
+    println!("╔════════════════════════════════════════════════════════════╗");
+    println!("║              PolyOpt Auto-Tuning Framework                 ║");
+    println!("╚════════════════════════════════════════════════════════════╝\n");
+    
+    println!("Input: {}", input.display());
+    println!("Configuration:");
+    println!("  Tile sizes to try: {:?}", tile_sizes);
+    println!("  Problem size: N={}", size);
+    println!("  Iterations per variant: {}", iterations);
+    println!("  OpenMP: {}", openmp);
+    println!("  Strategy: {:?}", search_strategy);
+    println!();
+    
+    // Read and compile the input file
+    let source = fs::read_to_string(&input)
+        .with_context(|| format!("Failed to read {}", input.display()))?;
+    
+    let programs = parse_and_lower(&source)?;
+    if programs.is_empty() {
+        anyhow::bail!("No functions found in input");
+    }
+    
+    let program = &programs[0];
+    
+    // Generate baseline C code
+    let options = CodeGenOptions {
+        openmp,
+        ..Default::default()
+    };
+    
+    let codegen = CCodeGen::with_options(options);
+    let c_code = codegen.generate(program)?;
+    
+    println!("Generated baseline code for: {}", program.name);
+    println!("Statements: {}", program.statements.len());
+    println!();
+    
+    // Create tuner
+    let mut tuner = AutoTuner::new();
+    tuner.tile_sizes = tile_sizes;
+    tuner.try_openmp = openmp;
+    tuner.iterations = iterations;
+    tuner.problem_size = size;
+    
+    // Run tuning
+    println!("Starting auto-tuning...\n");
+    
+    let results = if matches!(search_strategy, SearchStrategy::Exhaustive) {
+        tuner.tune(&c_code, &program.name)
+            .map_err(|e| anyhow::anyhow!("{}", e))?
+    } else {
+        let advanced = AdvancedAutoTuner::new(search_strategy);
+        advanced.tune(&c_code, &program.name)
+            .map_err(|e| anyhow::anyhow!("{}", e))?
+    };
+    
+    // Print results
+    print_results(&results);
+    
+    // Save results if output specified
+    if let Some(out_path) = output {
+        let mut csv = String::from("config,time_seconds,speedup\n");
+        for r in &results {
+            csv.push_str(&format!("{},{:.6},{:.2}\n", 
+                r.config.describe(), r.time_seconds, r.speedup));
+        }
+        fs::write(&out_path, &csv)?;
+        println!("\nResults saved to: {}", out_path.display());
+    }
+    
+    // Show command for best config
+    if let Some(best) = results.first() {
+        if best.speedup > 1.0 {
+            println!("\n To generate optimized code:");
+            let tile_str = if !best.config.tile_sizes.is_empty() && best.config.tile_sizes[0] > 0 {
+                format!(" --tile {}", best.config.tile_sizes[0])
+            } else {
+                String::new()
+            };
+            let omp_str = if best.config.parallel { " --openmp" } else { "" };
+            println!("  polyopt compile {}{}{}", input.display(), tile_str, omp_str);
         }
     }
     
